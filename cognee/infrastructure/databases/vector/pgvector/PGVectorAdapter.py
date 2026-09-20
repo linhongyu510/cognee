@@ -906,7 +906,7 @@ class PGVectorAdapter(SQLAlchemyAdapter, VectorDBInterface):
             async with self.engine.begin() as connection:
                 await self._mark_collection_owned(connection, collection_name)
             self._marked_collections.add(collection_name)
-        except Exception as error:
+        except exc.SQLAlchemyError as error:
             logger.debug(
                 "Could not stamp the ownership marker on collection '%s'; prune() will leave it in place: %s",
                 collection_name,
