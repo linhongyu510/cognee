@@ -30,6 +30,21 @@ MODEL_KEY = "embedding_model"
 DIMENSIONS_KEY = "embedding_dimensions"
 
 
+def _normalize_model_name(model: str | None) -> str | None:
+    """Normalize a model name for comparison by stripping the provider prefix.
+
+    ``openai/text-embedding-3-large`` and ``text-embedding-3-large`` refer to
+    the same model; the provider prefix is a routing detail, not part of the
+    model identity.
+    """
+    if model is None:
+        return None
+    # Strip provider prefix (e.g. "openai/" from "openai/text-embedding-3-large")
+    if "/" in model:
+        return model.split("/", 1)[1]
+    return model
+
+
 def embedding_model_record() -> dict:
     """The model and width a dataset is recorded as being embedded with.
 
@@ -81,16 +96,31 @@ async def ensure_embedding_model_matches(dataset_database: DatasetDatabase) -> N
             dataset_database, {MODEL_KEY: None, DIMENSIONS_KEY: stored_dimensions}
         )
 
-    if stored_dimensions == configured_dimensions:
-        return
+    if stored_dimensions != configured_dimensions:
+        raise EmbeddingDimensionMismatchError(
+            dataset_id=dataset_database.dataset_id,
+            stored_model=dataset_database.vector_database_connection_info.get(MODEL_KEY),
+            stored_dimensions=stored_dimensions,
+            configured_model=configured_model,
+            configured_dimensions=configured_dimensions,
+        )
 
-    raise EmbeddingDimensionMismatchError(
-        dataset_id=dataset_database.dataset_id,
-        stored_model=dataset_database.vector_database_connection_info.get(MODEL_KEY),
-        stored_dimensions=stored_dimensions,
-        configured_model=configured_model,
-        configured_dimensions=configured_dimensions,
-    )
+    # Dimensions match, but the model may have changed to a different model
+    # with the same width (e.g. bge-small vs all-MiniLM-L6-v2, both 384-dim).
+    # Mixing vectors from two different embedding spaces silently degrades
+    # every search, so we compare the model name when it is recorded.
+    stored_model = info.get(MODEL_KEY)
+    if stored_model is not None:
+        normalized_stored = _normalize_model_name(stored_model)
+        normalized_configured = _normalize_model_name(configured_model)
+        if normalized_stored != normalized_configured:
+            raise EmbeddingDimensionMismatchError(
+                dataset_id=dataset_database.dataset_id,
+                stored_model=stored_model,
+                stored_dimensions=stored_dimensions,
+                configured_model=configured_model,
+                configured_dimensions=configured_dimensions,
+            )
 
 
 async def _record_embedding_model(dataset_database: DatasetDatabase, record: dict) -> None:
